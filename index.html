@@ -1,130 +1,200 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Traffic-Free Route Finder</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Free Route Finder with OpenStreetMap</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     body {
       font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 20px;
+      margin: 20px;
       background: #f4f6f8;
-    }
-    h2 {
       text-align: center;
-    }
-    #inputs {
-      max-width: 600px;
-      margin: 10px auto 20px;
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-    input {
-      flex: 1 1 250px;
-      padding: 10px;
-      font-size: 16px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-sizing: border-box;
-    }
-    button {
-      padding: 10px 20px;
-      font-size: 16px;
-      background-color: #4285f4;
-      border: none;
-      border-radius: 4px;
-      color: white;
-      cursor: pointer;
-      transition: background-color 0.3s ease;
-    }
-    button:hover {
-      background-color: #3367d6;
     }
     #map {
       height: 500px;
       max-width: 900px;
-      margin: 0 auto;
+      margin: 20px auto;
       border-radius: 8px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    input, button {
+      padding: 10px;
+      font-size: 16px;
+      margin: 5px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      width: 250px;
+      max-width: 90vw;
+    }
+    button {
+      background-color: #4285f4;
+      border: none;
+      color: white;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    button:hover { background-color: #3367d6; }
+    #info {
+      max-width: 900px;
+      margin: 10px auto;
+      text-align: left;
+      background: white;
+      padding: 10px 14px;
+      border-radius: 6px;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.08);
+      font-size: 15px;
     }
   </style>
 </head>
 <body>
-  <h2>Traffic-Free Route Finder</h2>
-  <div id="inputs">
-    <input id="start" type="text" placeholder="Starting Point" />
-    <input id="end" type="text" placeholder="Destination" />
-    <button onclick="calculateRoute()">Get Route</button>
-  </div>
+  <h2>Free Route Finder with OpenStreetMap</h2>
 
+  <input id="start" placeholder="Starting Point (city or address)" />
+  <input id="end" placeholder="Destination (city or address)" />
+  <button onclick="calculateRoute()">Get Route</button>
+
+  <div id="info">Enter start and destination, then click <strong>Get Route</strong>.</div>
   <div id="map"></div>
 
-  <!-- Load Google Maps JavaScript API with Places library -->
-  <script
-    src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places"
-    async defer></script>
-
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    let map, directionsService, directionsRenderer;
-    let startInput, endInput, autocompleteStart, autocompleteEnd;
+).
+    const apiKey = ''; 
 
-    function initMap() {
-      // Initialize map centered on a default location
-      map = new google.maps.Map(document.getElementById("map"), {
-        center: { lat: 40.7128, lng: -74.0060 }, // New York City
-        zoom: 13,
-      });
+    const map = L.map('map').setView([40.7128, -74.0060], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
 
-      directionsService = new google.maps.DirectionsService();
-      directionsRenderer = new google.maps.DirectionsRenderer({ map: map });
+    let routeLayer = null;
+    let startMarker = null;
+    let endMarker = null;
 
-      // Setup Autocomplete for inputs
-      startInput = document.getElementById("start");
-      endInput = document.getElementById("end");
-
-      autocompleteStart = new google.maps.places.Autocomplete(startInput);
-      autocompleteEnd = new google.maps.places.Autocomplete(endInput);
-
-      // Bias results to map viewport
-      autocompleteStart.bindTo("bounds", map);
-      autocompleteEnd.bindTo("bounds", map);
+ 
+    async function geocode(address) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
+      const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!resp.ok) throw new Error('Geocoding request failed');
+      const data = await resp.json();
+      if (!data || data.length === 0) {
+        throw new Error('Address not found: ' + address);
+      }
+      return {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+        display_name: data[0].display_name
+      };
     }
 
-    function calculateRoute() {
-      const start = startInput.value;
-      const end = endInput.value;
+   
+    function formatDuration(secondsRaw) {
+      const secs = Math.round(secondsRaw);
+      const hours = Math.floor(secs / 3600);
+      const minutes = Math.floor((secs % 3600) / 60);
+      const seconds = secs % 60;
+      if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+      if (minutes > 0) return `${minutes}m ${seconds}s`;
+      return `${seconds}s`;
+    }
+
+ 
+    async function calculateRoute() {
+      const start = document.getElementById('start').value.trim();
+      const end = document.getElementById('end').value.trim();
+      const infoDiv = document.getElementById('info');
 
       if (!start || !end) {
-        alert("Please enter both starting point and destination.");
+        alert('Please enter both starting point and destination.');
         return;
       }
 
-      directionsService.route(
-        {
-          origin: start,
-          destination: end,
-          travelMode: google.maps.TravelMode.DRIVING,
-          drivingOptions: {
-            departureTime: new Date(), // Current time for live traffic
-            trafficModel: 'bestguess', // Predict best guess traffic
-          },
-          provideRouteAlternatives: true,
-        },
-        (response, status) => {
-          if (status === 'OK') {
-            directionsRenderer.setDirections(response);
-          } else {
-            alert('Could not get directions due to: ' + status);
-          }
-        }
-      );
-    }
+      try {
+        infoDiv.innerHTML = 'Geocoding addresses...';
+        const startCoords = await geocode(start);
+        const endCoords = await geocode(end);
 
-    // Initialize map after the Google Maps API loads
-    window.initMap = initMap;
+        // remove previous route/markers
+        if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+        if (startMarker) { map.removeLayer(startMarker); startMarker = null; }
+        if (endMarker) { map.removeLayer(endMarker); endMarker = null; }
+
+        let routeCoords = null;     
+        let distanceMeters = 0;
+        let durationSeconds = 0;
+
+        if (apiKey && apiKey !== 'YOUR_OPENROUTESERVICE_API_KEY') {
+       
+          infoDiv.innerHTML = 'Requesting route from OpenRouteService...';
+          const orsUrl = 'https://api.openrouteservice.org/v2/directions/driving-car/geojson';
+          const body = {
+            coordinates: [
+              [startCoords.lon, startCoords.lat],
+              [endCoords.lon, endCoords.lat]
+            ]
+          };
+          const resp = await fetch(orsUrl, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json, application/geo+json',
+              'Content-Type': 'application/json',
+              'Authorization': apiKey
+            },
+            body: JSON.stringify(body)
+          });
+          if (!resp.ok) throw new Error('OpenRouteService routing error: ' + resp.status);
+          const data = await resp.json();
+          if (!data.features || data.features.length === 0) throw new Error('No route found (ORS).');
+          const feat = data.features[0];
+         
+          routeCoords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
+          distanceMeters = feat.properties.summary.distance; 
+          durationSeconds = feat.properties.summary.duration; 
+        } else {
+         
+          infoDiv.innerHTML = 'Requesting route from OSRM (public server)...';
+     
+          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startCoords.lon},${startCoords.lat};${endCoords.lon},${endCoords.lat}?overview=full&geometries=geojson&steps=false&alternatives=false`;
+          const resp = await fetch(osrmUrl);
+          if (!resp.ok) throw new Error('OSRM routing error: ' + resp.status);
+          const data = await resp.json();
+          if (!data.routes || data.routes.length === 0) throw new Error('No route found (OSRM).');
+          const route = data.routes[0];
+          routeCoords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+          distanceMeters = route.distance;
+          durationSeconds = route.duration; 
+        }
+
+        routeLayer = L.polyline(routeCoords, { color: 'blue', weight: 5 }).addTo(map);
+
+        startMarker = L.marker([startCoords.lat, startCoords.lon]).addTo(map)
+          .bindPopup(`<strong>Start</strong><br>${startCoords.display_name}`).openPopup();
+        endMarker = L.marker([endCoords.lat, endCoords.lon]).addTo(map)
+          .bindPopup(`<strong>End</strong><br>${endCoords.display_name}`);
+
+        map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+
+ 
+        const distanceKm = distanceMeters / 1000;
+        const distanceStr = `${distanceKm.toFixed(2)} km (${Math.round(distanceMeters)} m)`;
+        const durationStr = formatDuration(durationSeconds);
+
+        infoDiv.innerHTML = `
+          <strong>Route found</strong><br>
+          <strong>From:</strong> ${startCoords.display_name}<br>
+          <strong>To:</strong> ${endCoords.display_name}<br>
+          <strong>Distance:</strong> ${distanceStr} &nbsp;&nbsp;
+          <strong>Duration:</strong> ${durationStr}
+        `;
+      } catch (err) {
+        console.error(err);
+        alert('Could not calculate route: ' + (err.message || err));
+        document.getElementById('info').innerText = 'Error: ' + (err.message || err);
+      }
+    }
   </script>
 </body>
 </html>
